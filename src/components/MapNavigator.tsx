@@ -187,6 +187,26 @@ export function MapNavigator() {
     coordinatesRef.current = coordinates;
   }, [coordinates]);
 
+  const failMap = (runtimeError: unknown) => {
+    console.error('MapLibre runtime error:', runtimeError);
+    setMapError(
+      runtimeError instanceof Error
+        ? runtimeError.message
+        : 'Карта перестала отвечать в этом браузере. Откройте сайт в системном браузере (Chrome/Safari).',
+    );
+
+    const map = mapRef.current;
+    mapRef.current = null;
+
+    if (map) {
+      try {
+        map.remove();
+      } catch {
+        // the map is already broken; nothing else to clean up
+      }
+    }
+  };
+
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) {
       return;
@@ -271,16 +291,20 @@ export function MapNavigator() {
       return;
     }
 
-    if (!userMarkerRef.current) {
-      userMarkerRef.current = new maplibregl.Marker({ color: '#2563eb' })
-        .setLngLat(toLngLat(coordinates))
-        .setPopup(new maplibregl.Popup().setText('Вы здесь'))
-        .addTo(map);
-    } else {
-      userMarkerRef.current.setLngLat(toLngLat(coordinates));
-    }
+    try {
+      if (!userMarkerRef.current) {
+        userMarkerRef.current = new maplibregl.Marker({ color: '#2563eb' })
+          .setLngLat(toLngLat(coordinates))
+          .setPopup(new maplibregl.Popup().setText('Вы здесь'))
+          .addTo(map);
+      } else {
+        userMarkerRef.current.setLngLat(toLngLat(coordinates));
+      }
 
-    map.easeTo({ center: toLngLat(coordinates), zoom: Math.max(map.getZoom(), 14), duration: 900 });
+      map.easeTo({ center: toLngLat(coordinates), zoom: Math.max(map.getZoom(), 14), duration: 900 });
+    } catch (error) {
+      failMap(error);
+    }
   }, [coordinates]);
 
   useEffect(() => {
@@ -290,20 +314,24 @@ export function MapNavigator() {
       return;
     }
 
-    if (isValidCoordinates(origin)) {
-      if (!originMarkerRef.current) {
-        originMarkerRef.current = new maplibregl.Marker({ color: '#16a34a' }).addTo(map);
+    try {
+      if (isValidCoordinates(origin)) {
+        if (!originMarkerRef.current) {
+          originMarkerRef.current = new maplibregl.Marker({ color: '#16a34a' }).addTo(map);
+        }
+
+        originMarkerRef.current.setLngLat(toLngLat(origin));
       }
 
-      originMarkerRef.current.setLngLat(toLngLat(origin));
-    }
+      if (isValidCoordinates(destination)) {
+        if (!destinationMarkerRef.current) {
+          destinationMarkerRef.current = new maplibregl.Marker({ color: '#dc2626' }).addTo(map);
+        }
 
-    if (isValidCoordinates(destination)) {
-      if (!destinationMarkerRef.current) {
-        destinationMarkerRef.current = new maplibregl.Marker({ color: '#dc2626' }).addTo(map);
+        destinationMarkerRef.current.setLngLat(toLngLat(destination));
       }
-
-      destinationMarkerRef.current.setLngLat(toLngLat(destination));
+    } catch (error) {
+      failMap(error);
     }
   }, [origin, destination]);
 
@@ -324,40 +352,48 @@ export function MapNavigator() {
     };
 
     const drawRoute = () => {
-      const source = map.getSource(routeSourceId) as maplibregl.GeoJSONSource | undefined;
+      try {
+        const source = map.getSource(routeSourceId) as maplibregl.GeoJSONSource | undefined;
 
-      if (source) {
-        source.setData(routeData);
-      } else {
-        map.addSource(routeSourceId, { type: 'geojson', data: routeData });
-        map.addLayer({
-          id: routeLayerId,
-          type: 'line',
-          source: routeSourceId,
-          paint: {
-            'line-color': '#2563eb',
-            'line-width': 5,
-            'line-opacity': 0.9,
-          },
-        });
+        if (source) {
+          source.setData(routeData);
+        } else {
+          map.addSource(routeSourceId, { type: 'geojson', data: routeData });
+          map.addLayer({
+            id: routeLayerId,
+            type: 'line',
+            source: routeSourceId,
+            paint: {
+              'line-color': '#2563eb',
+              'line-width': 5,
+              'line-opacity': 0.9,
+            },
+          });
+        }
+      } catch (error) {
+        failMap(error);
       }
     };
 
-    if (map.isStyleLoaded()) {
-      drawRoute();
-    } else {
-      map.once('load', drawRoute);
-    }
+    try {
+      if (map.isStyleLoaded()) {
+        drawRoute();
+      } else {
+        map.once('load', drawRoute);
+      }
 
-    const validRouteGeometry = route.geometry.filter(isValidCoordinates);
+      const validRouteGeometry = route.geometry.filter(isValidCoordinates);
 
-    if (validRouteGeometry.length > 1) {
-      const bounds = validRouteGeometry.reduce(
-        (currentBounds, point) => currentBounds.extend(toLngLat(point)),
-        new maplibregl.LngLatBounds(toLngLat(validRouteGeometry[0]), toLngLat(validRouteGeometry[0])),
-      );
+      if (validRouteGeometry.length > 1) {
+        const bounds = validRouteGeometry.reduce(
+          (currentBounds, point) => currentBounds.extend(toLngLat(point)),
+          new maplibregl.LngLatBounds(toLngLat(validRouteGeometry[0]), toLngLat(validRouteGeometry[0])),
+        );
 
-      map.fitBounds(bounds, { padding: 80, duration: 900 });
+        map.fitBounds(bounds, { padding: 80, duration: 900 });
+      }
+    } catch (error) {
+      failMap(error);
     }
   }, [route]);
 
