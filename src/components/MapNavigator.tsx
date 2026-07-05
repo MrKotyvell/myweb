@@ -73,6 +73,15 @@ const isValidCoordinates = (value: unknown): value is Coordinates =>
 
 const toLngLat = (coordinates: Coordinates) => ({ lng: coordinates[0], lat: coordinates[1] });
 
+const isWebglSupported = () => {
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+  } catch {
+    return false;
+  }
+};
+
 const buildPlaceLabel = (hit: NonNullable<GraphHopperGeocodingResponse['hits']>[number]) =>
   [hit.name, hit.street, hit.housenumber, hit.city, hit.state, hit.country].filter(Boolean).join(', ');
 
@@ -183,7 +192,13 @@ export function MapNavigator() {
       return;
     }
 
+    if (!isWebglSupported()) {
+      setMapError('Этот браузер не поддерживает WebGL. Откройте сайт в системном браузере (Chrome/Safari), а не во встроенном браузере мессенджера.');
+      return;
+    }
+
     let map: maplibregl.Map;
+    let handleMapError: (event: { error?: Error }) => void = () => {};
 
     try {
       map = new maplibregl.Map({
@@ -193,45 +208,45 @@ export function MapNavigator() {
         zoom: DEFAULT_ZOOM,
         pitchWithRotate: false,
       });
+
+      let didFallbackToRaster = false;
+      handleMapError = (event) => {
+        console.error('MapLibre error:', event.error);
+
+        if (!didFallbackToRaster && event.error) {
+          didFallbackToRaster = true;
+          setMapError(MAP_STYLE_FALLBACK_NOTICE);
+          map.setStyle(fallbackRasterStyle);
+        }
+      };
+
+      map.on('error', handleMapError);
+      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+      map.addControl(new maplibregl.FullscreenControl(), 'bottom-right');
+
+      map.on('click', (event) => {
+        if (!event.lngLat) {
+          return;
+        }
+
+        const clickedPoint: Coordinates = [event.lngLat.lng, event.lngLat.lat];
+
+        if (!isValidCoordinates(clickedPoint)) {
+          return;
+        }
+
+        setDestination(clickedPoint);
+        setDestinationQuery('Точка на карте');
+
+        if (coordinatesRef.current) {
+          setOrigin(coordinatesRef.current);
+          setOriginQuery('Моё местоположение');
+        }
+      });
     } catch (error) {
       setMapError(error instanceof Error ? error.message : 'Не удалось запустить карту в этом браузере.');
       return;
     }
-
-    let didFallbackToRaster = false;
-    const handleMapError = (event: { error?: Error }) => {
-      console.error('MapLibre error:', event.error);
-
-      if (!didFallbackToRaster && event.error) {
-        didFallbackToRaster = true;
-        setMapError(MAP_STYLE_FALLBACK_NOTICE);
-        map.setStyle(fallbackRasterStyle);
-      }
-    };
-
-    map.on('error', handleMapError);
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
-    map.addControl(new maplibregl.FullscreenControl(), 'bottom-right');
-
-    map.on('click', (event) => {
-      if (!event.lngLat) {
-        return;
-      }
-
-      const clickedPoint: Coordinates = [event.lngLat.lng, event.lngLat.lat];
-
-      if (!isValidCoordinates(clickedPoint)) {
-        return;
-      }
-
-      setDestination(clickedPoint);
-      setDestinationQuery('Точка на карте');
-
-      if (coordinatesRef.current) {
-        setOrigin(coordinatesRef.current);
-        setOriginQuery('Моё местоположение');
-      }
-    });
 
     mapRef.current = map;
 
